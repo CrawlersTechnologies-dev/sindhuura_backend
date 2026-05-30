@@ -258,6 +258,20 @@ class LoginAPIView(APIResponseMixin, APIView):
         user = authenticate(request, email=email, password=password)
 
         if not user:
+            # Check if email belongs to a soft-deleted user (and no active user exists)
+            if not CustomUser.objects.filter(email=email, is_deleted=False).exists():
+                deleted_user = CustomUser.objects.filter(
+                    is_deleted=True,
+                    email__istartswith=email
+                ).first()
+                if deleted_user:
+                    parts = deleted_user.email.split('_deleted_')
+                    if len(parts) == 2 and parts[0].lower() == email.lower():
+                        return self.error_response(
+                            errors="This account has been deleted. You can reactivate within 30 days by contacting support.",
+                            status_code=drf_status.HTTP_403_FORBIDDEN
+                        )
+
             return self.error_response(
                 errors="Invalid email or password",
                 status_code=drf_status.HTTP_401_UNAUTHORIZED
@@ -679,30 +693,30 @@ def validate_and_format_phone(phone_number):
     """
     Validate and format Indian phone number to +91XXXXXXXXXX format
     """
-    print(f"\n🔍 Validating phone: '{phone_number}'")
+    print(f"\n[INFO] Validating phone: '{phone_number}'")
     
     # Remove any spaces and dashes
     phone = re.sub(r'[\s\-]', '', str(phone_number))
-    print(f"🔍 After cleanup: '{phone}'")
+    print(f"[INFO] After cleanup: '{phone}'")
     
     # If it starts with +91 and is correct length
     if phone.startswith('+91') and len(phone) == 13:
-        print(f"✅ Valid format (with +91): {phone}")
+        print(f"[SUCCESS] Valid format (with +91): {phone}")
         return phone
     
     # If it starts with 91 (without +)
     if phone.startswith('91') and len(phone) == 12:
         result = f"+{phone}"
-        print(f"✅ Valid format (91 prefix, adding +): {result}")
+        print(f"[SUCCESS] Valid format (91 prefix, adding +): {result}")
         return result
     
     # If it's 10 digits, add +91
     if len(phone) == 10 and phone[0] in '6789':
         result = f"+91{phone}"
-        print(f"✅ Valid format (10 digits, adding +91): {result}")
+        print(f"[SUCCESS] Valid format (10 digits, adding +91): {result}")
         return result
     
-    print(f"❌ Invalid format")
+    print(f"[ERROR] Invalid format")
     return None
 
 
@@ -1113,6 +1127,11 @@ class DeleteAccountAPIView(APIView, APIResponseMixin):
                 user.is_deleted = True
                 user.deleted_at = timezone.now()
                 user.is_active = False  # Deactivate account immediately
+                
+                # Suffix email to release unique constraint for fresh registration
+                suffix = f"_deleted_{int(timezone.now().timestamp())}"
+                user.email = f"{user.email[:200]}{suffix}"
+                
                 user.save()
                 
                 print(f"🗑️ Soft deleted user account: {user.email}")
@@ -1129,7 +1148,7 @@ class DeleteAccountAPIView(APIView, APIResponseMixin):
         print("=" * 70 + "\n")
 
         return self.success_response(
-            message="Your account has been marked for deletion. It will be permanently deleted after 30 days. You can reactivate your account within 30 days by logging in.",
+            message="Your account has been marked for deletion. It will be permanently deleted after 30 days.",
             status_code=status.HTTP_200_OK
         )
 
@@ -1155,10 +1174,11 @@ class CheckEmailExistsAPIView(APIView):
         phone_exists = False
 
         if email:
-            email_exists = User.objects.filter(email__iexact=email).exists()
+            email_exists = User.objects.filter(email__iexact=email, is_deleted=False).exists()
 
         if phone_number:
-            phone_exists = User.objects.filter(phone_number=phone_number).exists()
+            formatted_phone = validate_and_format_phone(phone_number) or phone_number
+            phone_exists = User.objects.filter(phone_number=formatted_phone, is_deleted=False).exists()
 
         return Response(
             {

@@ -84,8 +84,8 @@ def admin_dashboard(request):
     #     return redirect('admin_login')
 
     # Statistics
-    total_users = CustomUser.objects.filter(is_staff=False).count()
-    verified_users = CustomUser.objects.filter(is_staff=False, is_verified=True).count()
+    total_users = CustomUser.objects.filter(is_staff=False, is_deleted=False).count()
+    verified_users = CustomUser.objects.filter(is_staff=False, is_verified=True, is_deleted=False).count()
     premium_users = SubscriptionPayment.objects.filter(payment_status='success').values('user').distinct().count()
     total_matches = MatchRequest.objects.count()
     accepted_matches = MatchRequest.objects.filter(status='accepted').count()
@@ -95,7 +95,7 @@ def admin_dashboard(request):
     total_revenue = SubscriptionPayment.objects.filter(payment_status='success').aggregate(total=Sum('amount'))['total'] or 0
 
     # Recent activities (last 10)
-    recent_users = CustomUser.objects.filter(is_staff=False).order_by('-date_joined')[:5]
+    recent_users = CustomUser.objects.filter(is_staff=False, is_deleted=False).order_by('-date_joined')[:5]
     recent_matches = MatchRequest.objects.select_related('from_user', 'to_user').order_by('-created_at')[:5]
     recent_payments = SubscriptionPayment.objects.select_related('user').filter(payment_status='success').order_by('-paid_at')[:5]
 
@@ -318,7 +318,7 @@ def subscription_plans(request):
 #     })
 
 def user_list(request):
-    users = CustomUser.objects.filter(is_staff=False).select_related("profile").annotate(
+    users = CustomUser.objects.filter(is_staff=False, is_deleted=False).select_related("profile").annotate(
         is_premium=Exists(SubscriptionPayment.objects.filter(user=OuterRef('pk'), payment_status='success'))
     )
 
@@ -452,9 +452,22 @@ def toggle_user_active(request, user_id):
 
 
 def delete_user(request, user_id):
+    from django.db import transaction
     user = get_object_or_404(CustomUser, id=user_id)
-    user.delete()
-    messages.success(request, "User deleted successfully.")
+    try:
+        with transaction.atomic():
+            user.is_deleted = True
+            user.deleted_at = timezone.now()
+            user.is_active = False
+            
+            # Suffix email to release unique constraint for fresh registration
+            suffix = f"_deleted_{int(timezone.now().timestamp())}"
+            user.email = f"{user.email[:200]}{suffix}"
+            
+            user.save()
+        messages.success(request, "User deleted successfully.")
+    except Exception as e:
+        messages.error(request, f"Error deleting user: {str(e)}")
     return redirect("user_list")
 
 

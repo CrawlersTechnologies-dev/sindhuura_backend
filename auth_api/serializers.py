@@ -134,9 +134,22 @@ class RegisterSerializer(serializers.Serializer):
                 "You must accept terms & conditions"
             )
 
-        if User.objects.filter(email=data["email"]).exists():
+        # Format and validate phone number
+        formatted_phone = format_phone_number(data["phone_number"])
+        if not formatted_phone:
+            raise serializers.ValidationError(
+                "Invalid phone number format"
+            )
+        data["phone_number"] = formatted_phone
+
+        if User.objects.filter(email=data["email"], is_deleted=False).exists():
             raise serializers.ValidationError(
                 "Email already registered"
+            )
+
+        if User.objects.filter(phone_number=data["phone_number"], is_deleted=False).exists():
+            raise serializers.ValidationError(
+                "Phone number already registered"
             )
 
         if (
@@ -594,7 +607,7 @@ class ForgotPasswordSerializer(serializers.Serializer):
             )
 
         if email:
-            if not User.objects.filter(email=email).exists():
+            if not User.objects.filter(email=email, is_deleted=False).exists():
                 raise serializers.ValidationError("Email not found")
 
         if phone_number:
@@ -603,7 +616,7 @@ class ForgotPasswordSerializer(serializers.Serializer):
             if not formatted_phone:
                 raise serializers.ValidationError("Invalid phone number format")
             
-            if not User.objects.filter(phone_number=formatted_phone).exists():
+            if not User.objects.filter(phone_number=formatted_phone, is_deleted=False).exists():
                 raise serializers.ValidationError("Phone number not found")
             
             # Update data with formatted phone number
@@ -643,7 +656,7 @@ class ResetPasswordSerializer(serializers.Serializer):
         user = None
         if email:
             try:
-                user = User.objects.get(email=email)
+                user = User.objects.get(email=email, is_deleted=False)
             except User.DoesNotExist:
                 raise serializers.ValidationError("Email not found")
 
@@ -655,7 +668,7 @@ class ResetPasswordSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Invalid phone number format")
             
             try:
-                user = User.objects.get(phone_number=formatted_phone)
+                user = User.objects.get(phone_number=formatted_phone, is_deleted=False)
             except User.DoesNotExist:
                 raise serializers.ValidationError("Phone number not found")
 
@@ -702,24 +715,22 @@ class DeleteAccountSerializer(serializers.Serializer):
 
         # Verify user exists
         try:
-            user = User.objects.get(phone_number=formatted_phone)
+            user = User.objects.get(phone_number=formatted_phone, is_deleted=False)
         except User.DoesNotExist:
             raise serializers.ValidationError("Phone number not found")
 
-        # Verify OTP
+        # Verify OTP — must be already verified via verify-otp endpoint
         try:
             otp_obj = PhoneOTP.objects.get(
                 phone_number=formatted_phone,
-                is_verified=False  # Get unverified OTP
+                otp=otp,
+                is_verified=True  # Must have been verified via verify-otp first
             )
         except PhoneOTP.DoesNotExist:
-            raise serializers.ValidationError("Invalid OTP request")
+            raise serializers.ValidationError("Invalid or unverified OTP. Please verify your OTP first.")
 
         if otp_obj.is_expired():
             raise serializers.ValidationError("OTP has expired")
-
-        if otp_obj.otp != otp:
-            raise serializers.ValidationError("Invalid OTP")
 
         data["user"] = user
         data["formatted_phone"] = formatted_phone
