@@ -693,9 +693,6 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 
 class DeleteAccountSerializer(serializers.Serializer):
-    """
-    Delete user account with OTP verification
-    """
     phone_number = serializers.CharField(max_length=15, required=True)
     otp = serializers.CharField(max_length=6, required=True)
 
@@ -704,29 +701,33 @@ class DeleteAccountSerializer(serializers.Serializer):
         otp = data.get("otp")
 
         if not phone_number or not otp:
-            raise serializers.ValidationError(
-                "Phone number and OTP are required"
-            )
+            raise serializers.ValidationError("Phone number and OTP are required")
 
-        # Format phone number before lookup
         formatted_phone = format_phone_number(phone_number)
         if not formatted_phone:
             raise serializers.ValidationError("Invalid phone number format")
 
-        # Verify user exists
-        try:
-            user = User.objects.get(phone_number=formatted_phone, is_deleted=False)
-        except User.DoesNotExist:
+        # ✅ Try +91 format first
+        user = User.objects.filter(phone_number=formatted_phone, is_deleted=False).first()
+
+        # ✅ Fallback to 10-digit
+        if not user:
+            short_phone = formatted_phone.replace('+91', '')
+            user = User.objects.filter(phone_number=short_phone, is_deleted=False).first()
+
+        # ✅ If still no user, raise error
+        if not user:
             raise serializers.ValidationError("Phone number not found")
 
-        # Verify OTP — must be already verified via verify-otp endpoint
-        try:
-            otp_obj = PhoneOTP.objects.get(
-                phone_number=formatted_phone,
-                otp=otp,
-                is_verified=True  # Must have been verified via verify-otp first
-            )
-        except PhoneOTP.DoesNotExist:
+        # ✅ Use filter().first() not get()
+        otp_obj = PhoneOTP.objects.filter(
+            phone_number=formatted_phone,
+            otp=otp,
+            is_verified=True
+        ).first()
+
+        # ✅ Explicit None check
+        if not otp_obj:
             raise serializers.ValidationError("Invalid or unverified OTP. Please verify your OTP first.")
 
         if otp_obj.is_expired():

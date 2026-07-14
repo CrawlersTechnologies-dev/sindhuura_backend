@@ -117,3 +117,5 @@ def hard_delete_soft_deleted_users(self):
     print("=" * 70 + "\n")
     
     return f"Hard deleted {deleted_count} users, {error_count} errors"
+
+

@@ -28,3 +28,7 @@ class JWTAuthMiddleware(BaseMiddleware):
             scope["user"] = AnonymousUser()
 
         return await super().__call__(scope, receive, send)
+
+
+
+
